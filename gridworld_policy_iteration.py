@@ -135,28 +135,69 @@ def random_policy(env):
             pi[r, c, :] = 1 / 4
     return pi
 
+def q_value(env, V, s, a, gamma, noise):
+    """Expected return of taking action a in state s, then using V afterward."""
+    q = 0.0
+    for s_next, p in transition_dist(env, s, a, noise):
+        r = env.reward(s, a, s_next)
+        q += p * (r + gamma * V[s_next])
+    return q
+
 def policy_evaluation(env, V, pi, gamma, noise):
+    """One sweep: V(s) = sum_a pi(a|s) * sum_s' P(s'|s,a) * [R + gamma * V(s')]"""
     V_new = V.copy()
-    """
-    TODO: Implement one swep policy evaluation to compute V(s) given policy pi:
-    update V(s) given policy pi, the environment dynamics, and gamma
-    """
+    for r in range(env.H):
+        for c in range(env.W):
+            s = (r, c)
+            # terminals and obstacles keep value 0
+            if env.is_terminal(s) or env.is_obstacle(s):
+                V_new[r, c] = 0.0
+                continue
+            v = 0.0
+            for a in ACTIONS:
+                if pi[r, c, a] > 0:
+                    v += pi[r, c, a] * q_value(env, V, s, a, gamma, noise)
+            V_new[r, c] = v
     return V_new
 
-def policy_improvement(env, V, gamma, noise):
+def policy_improvement(env, V, gamma, noise, pi_old=None):
+    """Make pi greedy w.r.t. V: in each state pick the action with highest Q."""
     pi_new = np.zeros((env.H, env.W, 4))
-    """
-    TODO: Implement policy improvement: update pi greedily based on current V(s).
-    """
-    return pi_new, True
+    stable = True
+    for r in range(env.H):
+        for c in range(env.W):
+            s = (r, c)
+            if env.is_terminal(s) or env.is_obstacle(s):
+                continue
+            q = [q_value(env, V, s, a, gamma, noise) for a in ACTIONS]
+            best = int(np.argmax(q))
+            pi_new[r, c, best] = 1.0
+            # policy is stable if the best action didn't change
+            if pi_old is not None:
+                old_best = int(np.argmax(pi_old[r, c, :]))
+                if not np.isclose(q[old_best], q[best]):
+                    stable = False
+    if pi_old is None:
+        stable = False
+    return pi_new, stable
 
 def policy_iteration(env, gamma, noise, max_eval_iters=100, tol=1e-6):
     V = np.zeros((env.H, env.W))
     pi = random_policy(env)
     stable = False
-    """
-    TODO: Combine policy evaluation and improvement to perform policy iteration.
-    """
+    iteration = 0
+    while not stable:
+        # 1) evaluate current policy until V stops changing
+        for _ in range(max_eval_iters):
+            V_new = policy_evaluation(env, V, pi, gamma, noise)
+            delta = np.max(np.abs(V_new - V))
+            V = V_new
+            if delta < tol:
+                break
+        # 2) improve policy greedily
+        pi, stable = policy_improvement(env, V, gamma, noise, pi_old=pi)
+        iteration += 1
+    print(f"Policy iteration converged in {iteration} iterations")
     return V, pi
 
 def extract_path(env, pi, start, max_steps=50):
